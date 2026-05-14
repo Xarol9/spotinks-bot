@@ -18,4 +18,4 @@ yarn-error.log*
 
 # Системні файли Arch Linux/macOS
 .DS_Store
-Thumbs.db
+Thumbs.dbgit status

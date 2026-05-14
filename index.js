@@ -1,6 +1,6 @@
 /**
  * Spotinks Engine v1.1 - Void Team
- * Fix: Одноразові промокоди, оновлений UX замовлень, фікс кнопок та адмінки.
+ * Full Unified Code: Баланс, Черга, Адмінка, Промокоди, Підтримка.
  */
 
 require('dotenv').config();
@@ -10,7 +10,7 @@ const { open } = require('sqlite');
 const fs = require('fs');
 const path = require('path');
 
-const { BOT_TOKEN, ADMIN_ID } = process.env;
+const { BOT_TOKEN, ADMIN_ID, ADMIN_USERNAME } = process.env;
 const DB_PATH = path.resolve(__dirname, 'spotinks.db');
 const PROMOS_PATH = path.resolve(__dirname, 'promos.json');
 
@@ -18,15 +18,16 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // --- КОНФІГУРАЦІЯ ПОСЛУГ ---
 const SERVICES = {
-    render: { name: "3D Рендер", price: 500, icon: '🧊' },
-    design: { name: "UI/UX Дизайн", price: 350, icon: '🎨' },
-    plugin: { name: "Java Plugin", price: 650, icon: '☕' },
-    preview: { name: "YouTube Прев'ю", price: 200, icon: '🎬' }
+    render: { name: "3D Рендер", price: 550, icon: '🧊' },
+    design: { name: "UI/UX Дизайн", price: 400, icon: '🎨' },
+    plugin: { name: "Java Plugin (Junior)", price: 300, icon: '☕' },
+    setup: { name: "Налаштування сервера", price: 200, icon: '⚙️' },
+    social: { name: "Social Design", price: 350, icon: '🎬' }
 };
 
 let db;
 
-// --- ІНІЦІАЛІЗАЦІЯ ---
+// --- ІНІЦІАЛІЗАЦІЯ БАЗИ ДАНИХ ---
 async function bootstrap() {
     db = await open({ filename: DB_PATH, driver: sqlite3.Database });
     await db.exec(`
@@ -50,25 +51,32 @@ async function bootstrap() {
             PRIMARY KEY (user_id, promo_code)
         );
     `);
-    console.log('💎 Void Engine v1.1: Фікси та нові фічі активовані');
+    
+    // Створюємо порожній файл промокодів, якщо його немає
+    if (!fs.existsSync(PROMOS_PATH)) {
+        fs.writeFileSync(PROMOS_PATH, JSON.stringify({ "START": 100 }, null, 2));
+    }
+    
+    console.log('💎 Void Engine v1.1: Системи активовані. Готовий до роботи!');
 }
 
 // --- КЛАВІАТУРИ ---
 const KEYBOARDS = {
     main: () => Markup.keyboard([
-        ['🛍 Каталог послуг', '🛒 Мій Кошик'],
+        ['🛍 Каталог послуг', '🛒 Кошик'],
         ['👤 Профіль', '📈 Стан черги'],
         ['🎟 Активувати код', '🆘 Підтримка']
     ]).resize(),
     admin: () => Markup.keyboard([
-        ['📋 Керування чергою', '📊 Повна аналітика'],
-        ['💰 Коригування балансу', '🔙 Режим юзера']
+        ['📋 Керування чергою', '📊 Аналітика'],
+        ['📢 Розсилка', '💰 Поповнити баланс'],
+        ['🔙 Режим юзера']
     ]).resize()
 };
 
 bot.use(session());
 
-// --- МІДЛВАР ---
+// --- MIDDLEWARE (Реєстрація юзерів) ---
 bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     ctx.session ??= { cart: [] };
@@ -77,46 +85,47 @@ bot.use(async (ctx, next) => {
 });
 
 // --- ЛОГІКА КОРИСТУВАЧА ---
-bot.start((ctx) => ctx.reply('Void Team: Spotinks Control v1.1', ctx.from.id == ADMIN_ID ? KEYBOARDS.admin() : KEYBOARDS.main()));
+bot.start((ctx) => {
+    const is_admin = ctx.from.id == ADMIN_ID;
+    ctx.reply(
+        `Void Team: Spotinks Control v1.1 🌑\n\nПривіт, ${ctx.from.first_name}! Оберіть пункт меню для початку.`,
+        is_admin ? KEYBOARDS.admin() : KEYBOARDS.main()
+    );
+});
 
 bot.hears('🛍 Каталог послуг', (ctx) => {
-    const btns = Object.entries(SERVICES).map(([id, s]) => [Markup.button.callback(`${s.icon} ${s.name} — ${s.price}₴`, `add_${id}`)]);
-    ctx.reply("✨ Оберіть потрібну послугу для замовлення:", Markup.inlineKeyboard(btns));
+    const btns = Object.entries(SERVICES).map(([id, s]) => [
+        Markup.button.callback(`${s.icon} ${s.name} — ${s.price}₴`, `add_${id}`)
+    ]);
+    ctx.reply("✨ Оберіть потрібну послугу:", Markup.inlineKeyboard(btns));
 });
 
 bot.action(/add_(\w+)/, (ctx) => {
     const service = SERVICES[ctx.match[1]];
     ctx.session.cart.push(service);
-    ctx.answerCbQuery(`✅ ${service.name} додано до кошика!`);
+    ctx.answerCbQuery(`✅ ${service.name} додано!`);
 });
 
-bot.hears('🛒 Мій Кошик', async (ctx) => {
+bot.hears('🛒 Кошик', async (ctx) => {
     const cart = ctx.session.cart || [];
-    if (!cart.length) return ctx.reply("Ваш кошик поки що порожній. Перейдіть до каталогу! 🛍");
+    if (!cart.length) return ctx.reply("Ваш кошик порожній! 🛍");
     
-    const itemList = cart.map((item, index) => `${index + 1}. ${item.icon} ${item.name} — ${item.price}₴`).join('\n');
+    const itemList = cart.map((item, i) => `${i + 1}. ${item.icon} ${item.name} — ${item.price}₴`).join('\n');
     const total = cart.reduce((s, i) => s + i.price, 0);
     
-    ctx.replyWithMarkdown(`🛒 **Ваше замовлення:**\n\n${itemList}\n\n**Разом до сплати:** ${total}₴`, Markup.inlineKeyboard([
-        [Markup.button.callback('💳 Підтвердити та сплатити', 'pay')],
-        [Markup.button.callback('🗑 Очистити кошик', 'clear')]
+    ctx.replyWithMarkdown(`🛒 **Ваше замовлення:**\n\n${itemList}\n\n**Разом:** ${total}₴`, Markup.inlineKeyboard([
+        [Markup.button.callback('💳 Сплатити з балансу', 'pay')],
+        [Markup.button.callback('🗑 Очистити', 'clear')]
     ]));
-});
-
-bot.action('clear', (ctx) => {
-    ctx.session.cart = [];
-    ctx.editMessageText("🗑 Кошик очищено.");
 });
 
 bot.action('pay', async (ctx) => {
     const cart = ctx.session.cart || [];
-    if (!cart.length) return ctx.answerCbQuery("Кошик порожній!");
-
     const total = cart.reduce((s, i) => s + i.price, 0);
     const user = await db.get('SELECT balance FROM users WHERE user_id = ?', [ctx.from.id]);
-    
+
     if (user.balance < total) {
-        return ctx.reply(`❌ Недостатньо коштів. Ваш баланс: ${user.balance}₴. Потрібно ще ${total - user.balance}₴.`);
+        return ctx.reply(`❌ Недостатньо коштів! Ваш баланс: ${user.balance}₴. Потрібно ще ${total - user.balance}₴.\nСкористайтеся промокодом або зверніться в підтримку.`);
     }
 
     const items = cart.map(i => i.name).join(', ');
@@ -124,67 +133,95 @@ bot.action('pay', async (ctx) => {
     await db.run('UPDATE users SET balance = balance - ? WHERE user_id = ?', [total, ctx.from.id]);
 
     ctx.session.cart = [];
-    ctx.editMessageText("🚀 Замовлення успішно оформлено! Очікуйте, ми скоро почнемо роботу.");
-    bot.telegram.sendMessage(ADMIN_ID, `🔥 **Нове замовлення!**\nВід: @${ctx.from.username}\nПослуги: ${items}\nСума: ${total}₴`);
+    ctx.editMessageText("🚀 Замовлення оформлено! Я вже бачу його в адмінці.");
+    bot.telegram.sendMessage(ADMIN_ID, `🔥 **НОВЕ ЗАМОВЛЕННЯ!**\nВід: @${ctx.from.username}\nПослуги: ${items}\nСума: ${total}₴`);
+});
+
+bot.hears('👤 Профіль', async (ctx) => {
+    const user = await db.get('SELECT * FROM users WHERE user_id = ?', [ctx.from.id]);
+    const orders = await db.get('SELECT COUNT(*) as count FROM orders WHERE user_id = ?', [ctx.from.id]);
+    ctx.replyWithMarkdown(`👤 **Профіль:**\n\nID: \`${ctx.from.id}\`\nБаланс: ${user.balance}₴\nЗамовлень: ${orders.count}`);
+});
+
+bot.hears('📈 Стан черги', async (ctx) => {
+    const queue = await db.get('SELECT COUNT(*) as count FROM orders WHERE status = "paid"');
+    ctx.reply(`📊 Зараз у роботі: ${queue.count} замовлень.\nМи працюємо максимально швидко!`);
+});
+
+bot.hears('🆘 Підтримка', (ctx) => {
+    ctx.reply(`🆘 Зв'язок з адміністратором: @${ADMIN_USERNAME}\nСайт: xarol9.github.io/spotinks-web/`);
 });
 
 bot.hears('🎟 Активувати код', (ctx) => {
     ctx.session.state = 'WAIT_PROMO';
-    ctx.reply("⌨️ Введіть ваш секретний промокод:");
+    ctx.reply("Введіть ваш секретний код:");
 });
 
-// --- АДМІНКА ТА ФІКСИ ---
-bot.hears('📊 Повна аналітика', async (ctx) => {
-    if (ctx.from.id != ADMIN_ID) return;
-    const totalOrders = await db.get('SELECT COUNT(*) as count FROM orders');
-    const totalUsers = await db.get('SELECT COUNT(*) as count FROM users');
-    const income = await db.get('SELECT SUM(total_price) as sum FROM orders WHERE status = "done"');
-    
-    ctx.replyWithMarkdown(`📊 **Статистика Void Team:**\n\n👥 Юзерів: ${totalUsers.count}\n📦 Замовлень: ${totalOrders.count}\n💰 Прибуток: ${income.sum || 0}₴`);
-});
+// --- АДМІН-ФУНКЦІЇ ---
+bot.hears('🔙 Режим юзера', (ctx) => ctx.reply('Переключено на інтерфейс юзера', KEYBOARDS.main()));
 
 bot.hears('📋 Керування чергою', async (ctx) => {
     if (ctx.from.id != ADMIN_ID) return;
     const orders = await db.all('SELECT * FROM orders WHERE status = "paid"');
-    if (!orders.length) return ctx.reply("В черзі поки що порожньо. Відпочиваємо! 😎");
+    if (!orders.length) return ctx.reply("Черга порожня.");
     
     for (const o of orders) {
-        await ctx.reply(`📦 Замовлення #${o.id}\n👤 Клієнт: @${o.username}\n🛠 Послуги: ${o.items}`, Markup.inlineKeyboard([
+        ctx.reply(`📦 #${o.id} від @${o.username}\n🛠 ${o.items}`, Markup.inlineKeyboard([
             [Markup.button.callback('✅ Виконано', `done_${o.id}`)]
         ]));
     }
 });
 
 bot.action(/done_(\d+)/, async (ctx) => {
-    if (ctx.from.id != ADMIN_ID) return;
-    const orderId = ctx.match[1];
-    await db.run('UPDATE orders SET status = "done" WHERE id = ?', [orderId]);
-    ctx.editMessageText(`✅ Замовлення #${orderId} позначено як виконане!`);
+    const id = ctx.match[1];
+    await db.run('UPDATE orders SET status = "done" WHERE id = ?', [id]);
+    ctx.editMessageText(`✅ Замовлення #${id} завершене!`);
 });
 
-// --- ОБРОБКА ТЕКСТУ (ПРОМОКОДИ) ---
+bot.hears('📢 Розсилка', (ctx) => {
+    if (ctx.from.id != ADMIN_ID) return;
+    ctx.session.state = 'WAIT_BROADCAST';
+    ctx.reply("Введіть текст для розсилки всім користувачам:");
+});
+
+bot.hears('💰 Поповнити баланс', (ctx) => {
+    if (ctx.from.id != ADMIN_ID) return;
+    ctx.session.state = 'WAIT_GIVE_ID';
+    ctx.reply("Введіть ID юзера та суму (напр: 12345 500):");
+});
+
+// --- ОБРОБНИК ТЕКСТУ ---
 bot.on('text', async (ctx, next) => {
-    if (ctx.session.state === 'WAIT_PROMO') {
+    const state = ctx.session.state;
+
+    if (state === 'WAIT_PROMO') {
         const code = ctx.message.text.toUpperCase();
-        const promos = fs.existsSync(PROMOS_PATH) ? JSON.parse(fs.readFileSync(PROMOS_PATH, 'utf-8')) : {};
+        const promos = JSON.parse(fs.readFileSync(PROMOS_PATH, 'utf-8'));
         
-        if (!promos[code]) {
-            ctx.reply("❌ Такого коду не існує.");
-        } else {
-            const alreadyUsed = await db.get('SELECT 1 FROM used_promos WHERE user_id = ? AND promo_code = ?', [ctx.from.id, code]);
-            if (alreadyUsed) {
-                ctx.reply("⚠️ Ви вже використовували цей промокод! Один код — один раз в одні руки.");
-            } else {
-                const bonus = promos[code];
-                await db.run('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)', [ctx.from.id, code]);
-                await db.run('UPDATE users SET balance = balance + ? WHERE user_id = ?', [bonus, ctx.from.id]);
-                ctx.reply(`🎉 Успіх! На ваш баланс нараховано ${bonus}₴.`);
-            }
-        }
+        if (!promos[code]) return ctx.reply("❌ Невірний код.");
+        
+        const used = await db.get('SELECT 1 FROM used_promos WHERE user_id = ? AND promo_code = ?', [ctx.from.id, code]);
+        if (used) return ctx.reply("⚠️ Ви вже використали цей код.");
+
+        await db.run('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)', [ctx.from.id, code]);
+        await db.run('UPDATE users SET balance = balance + ? WHERE user_id = ?', [promos[code], ctx.from.id]);
+        ctx.reply(`🎉 Нараховано ${promos[code]}₴!`);
         ctx.session.state = null;
-        return;
+    } 
+    else if (state === 'WAIT_GIVE_ID' && ctx.from.id == ADMIN_ID) {
+        const [tid, amt] = ctx.message.text.split(' ');
+        await db.run('UPDATE users SET balance = balance + ? WHERE user_id = ?', [amt, tid]);
+        ctx.reply(`✅ Поповнено ${tid} на ${amt}₴`);
+        bot.telegram.sendMessage(tid, `💰 Баланс поповнено на ${amt}₴ адміном!`);
+        ctx.session.state = null;
     }
-    return next();
+    else if (state === 'WAIT_BROADCAST' && ctx.from.id == ADMIN_ID) {
+        const users = await db.all('SELECT user_id FROM users');
+        users.forEach(u => bot.telegram.sendMessage(u.user_id, `📢 **Оголошення:**\n\n${ctx.message.text}`, { parse_mode: 'Markdown' }).catch(e => {}));
+        ctx.reply("✅ Розсилку відправлено.");
+        ctx.session.state = null;
+    }
+    else return next();
 });
 
 bootstrap().then(() => bot.launch({ dropPendingUpdates: true }));
