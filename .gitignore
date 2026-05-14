@@ -19,3 +19,5 @@ yarn-error.log*
 # Системні файли Arch Linux/macOS
 .DS_Store
 Thumbs.dbgit status
+
+oldversion.txt
