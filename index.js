@@ -1,6 +1,6 @@
 /**
  * Spotinks Engine v1.0 - Void Team Official Release
- * Оптимізація: мінімальне споживання RAM, захист від вилетів, чистий код.
+ * Основні фічі: Аналітика, Черга, Промокоди, Захист від крашів.
  */
 
 require('dotenv').config();
@@ -10,15 +10,13 @@ const { open } = require('sqlite');
 const fs = require('fs');
 const path = require('path');
 
-const { BOT_TOKEN, ADMIN_ID, ADMIN_USERNAME } = process.env;
+const { BOT_TOKEN, ADMIN_ID } = process.env;
 const DB_PATH = path.resolve(__dirname, 'spotinks.db');
 const PROMOS_PATH = path.resolve(__dirname, 'promos.json');
 
-if (!BOT_TOKEN || !ADMIN_ID) process.exit(1);
-
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- СЕРВІСИ (Константи) ---
+// --- КОНФІГУРАЦІЯ ПОСЛУГ ---
 const SERVICES = {
     render: { name: "3D Рендер", price: 500, icon: '🧊' },
     design: { name: "UI/UX Дизайн", price: 350, icon: '🎨' },
@@ -28,17 +26,14 @@ const SERVICES = {
 
 let db;
 
-// --- ЯДРО СИСТЕМИ ---
+// --- ІНІЦІАЛІЗАЦІЯ ---
 async function bootstrap() {
     db = await open({ filename: DB_PATH, driver: sqlite3.Database });
-    
-    // Створення таблиць одним запитом
     await db.exec(`
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             balance INTEGER DEFAULT 0,
-            referred_by INTEGER,
             is_banned INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS orders (
@@ -47,24 +42,19 @@ async function bootstrap() {
             username TEXT,
             items TEXT,
             total_price INTEGER,
-            status TEXT DEFAULT 'paid'
+            status TEXT DEFAULT 'paid',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
-    
-    // Перевірка колонок (якщо база стара)
-    const columns = (await db.all(`PRAGMA table_info(users)`)).map(c => c.name);
-    if (!columns.includes('referred_by')) await db.exec('ALTER TABLE users ADD COLUMN referred_by INTEGER');
-
-    console.log('🚀 Void Engine 1.0: Database & Logic Loaded');
+    console.log('💎 Void Engine v1.0 завантажено');
 }
 
 // --- КЛАВІАТУРИ ---
-const UI = {
-    main: (id) => Markup.keyboard([
+const KEYBOARDS = {
+    main: () => Markup.keyboard([
         ['🛍 Послуги', '🛒 Кошик'],
         ['👤 Профіль', '📈 Черга'],
-        ['👥 Реферали', '🎟 Промокод'],
-        ['🆘 Підтримка']
+        ['🎟 Промокод', '🆘 Підтримка']
     ]).resize(),
     admin: () => Markup.keyboard([
         ['📋 Активні Замовлення', '📊 Аналітика'],
@@ -72,49 +62,42 @@ const UI = {
     ]).resize()
 };
 
-// --- MIDDLEWARES ---
 bot.use(session());
+
+// --- МІДЛВАР ---
 bot.use(async (ctx, next) => {
     if (!ctx.from) return;
     ctx.session ??= { cart: [] };
-    
-    // Авто-реєстрація
     await db.run('INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)', [ctx.from.id, ctx.from.username]);
-    
-    const user = await db.get('SELECT is_banned FROM users WHERE user_id = ?', [ctx.from.id]);
-    if (user?.is_banned) return ctx.reply("🚫 Доступ заблоковано.");
     return next();
 });
 
-// --- ЛОГІКА ЮЗЕРА ---
-bot.start((ctx) => ctx.reply('Void Team System v1.0', ctx.from.id == ADMIN_ID ? UI.admin() : UI.main()));
+// --- ЛОГІКА КОРИСТУВАЧА ---
+bot.start((ctx) => ctx.reply('Void Team Control v1.0', ctx.from.id == ADMIN_ID ? KEYBOARDS.admin() : KEYBOARDS.main()));
 
 bot.hears('🛍 Послуги', (ctx) => {
     const btns = Object.entries(SERVICES).map(([id, s]) => [Markup.button.callback(`${s.icon} ${s.name} - ${s.price}₴`, `add_${id}`)]);
-    ctx.reply("Доступні послуги:", Markup.inlineKeyboard(btns));
+    ctx.reply("Оберіть послугу:", Markup.inlineKeyboard(btns));
 });
 
 bot.action(/add_(\w+)/, (ctx) => {
-    const s = SERVICES[ctx.match[1]];
-    ctx.session.cart.push(s);
-    ctx.answerCbQuery(`✅ ${s.name} додано`);
+    ctx.session.cart.push(SERVICES[ctx.match[1]]);
+    ctx.answerCbQuery(`✅ Додано`);
 });
 
 bot.hears('🛒 Кошик', async (ctx) => {
     const cart = ctx.session.cart || [];
     if (!cart.length) return ctx.reply("Кошик порожній.");
-    
-    const total = cart.reduce((sum, i) => sum + i.price, 0);
-    ctx.replyWithMarkdown(`🛒 **Замовлення:**\nСума: ${total}₴`, Markup.inlineKeyboard([
+    const total = cart.reduce((s, i) => s + i.price, 0);
+    ctx.replyWithMarkdown(`🛒 **Кошик:**\nСума: ${total}₴`, Markup.inlineKeyboard([
         [Markup.button.callback('💎 Оплатити', 'pay')],
-        [Markup.button.callback('🗑 Очистити', 'reset')]
+        [Markup.button.callback('🗑 Очистити', 'clear')]
     ]));
 });
 
 bot.action('pay', async (ctx) => {
     const total = ctx.session.cart.reduce((s, i) => s + i.price, 0);
     const user = await db.get('SELECT balance FROM users WHERE user_id = ?', [ctx.from.id]);
-
     if (user.balance < total) return ctx.answerCbQuery("❌ Недостатньо коштів!");
 
     const items = ctx.session.cart.map(i => i.name).join(', ');
@@ -122,19 +105,14 @@ bot.action('pay', async (ctx) => {
     await db.run('UPDATE users SET balance = balance - ? WHERE user_id = ?', [total, ctx.from.id]);
 
     ctx.session.cart = [];
-    ctx.editMessageText("✅ Сплачено! Чекайте на зв'язок.");
+    ctx.editMessageText("✅ Сплачено! Ви в черзі.");
     bot.telegram.sendMessage(ADMIN_ID, `🔥 Нове замовлення від @${ctx.from.username}`);
 });
 
-bot.hears('👤 Профіль', async (ctx) => {
-    const user = await db.get('SELECT balance FROM users WHERE user_id = ?', [ctx.from.id]);
-    ctx.reply(`💳 Баланс: ${user.balance}₴\n🆔 ID: ${ctx.from.id}`);
-});
-
 bot.hears('📈 Черга', async (ctx) => {
-    const orders = await db.all('SELECT user_id FROM orders WHERE status = "paid"');
+    const orders = await db.all('SELECT user_id FROM orders WHERE status = "paid" ORDER BY created_at ASC');
     const pos = orders.findIndex(o => o.user_id === ctx.from.id) + 1;
-    ctx.reply(pos > 0 ? `📊 Позиція в черзі: ${pos}` : "Активних замовлень немає.");
+    ctx.reply(pos > 0 ? `📊 Ваша позиція: ${pos}` : "У вас немає активних замовлень.");
 });
 
 bot.hears('🎟 Промокод', (ctx) => {
@@ -142,20 +120,19 @@ bot.hears('🎟 Промокод', (ctx) => {
     ctx.reply("Введіть код:");
 });
 
-bot.hears('🆘 Підтримка', (ctx) => ctx.reply(`Зв'язок: @${ADMIN_USERNAME || 'admin'}`));
-
-// --- АДМІНІСТРУВАННЯ ---
+// --- АДМІНКА ---
 bot.hears('📊 Аналітика', async (ctx) => {
     if (ctx.from.id != ADMIN_ID) return;
-    const data = await db.all('SELECT items, COUNT(*) as c FROM orders GROUP BY items');
-    ctx.reply(`Статистика:\n${data.map(d => `${d.items}: ${d.c}`).join('\n')}`);
+    const stats = await db.all('SELECT items, COUNT(*) as c FROM orders GROUP BY items');
+    let msg = "📊 **Аналітика:**\n\n";
+    stats.forEach(s => msg += `${s.items}: ${"🟩".repeat(Math.min(s.c, 5))} (${s.c})\n`);
+    ctx.replyWithMarkdown(msg);
 });
 
 bot.hears('📋 Активні Замовлення', async (ctx) => {
     if (ctx.from.id != ADMIN_ID) return;
     const orders = await db.all('SELECT * FROM orders WHERE status = "paid"');
-    if (!orders.length) return ctx.reply("Порожньо.");
-    
+    if (!orders.length) return ctx.reply("Черга порожня.");
     orders.forEach(o => {
         ctx.reply(`📦 #${o.id} @${o.username}\n${o.items}`, Markup.inlineKeyboard([
             [Markup.button.callback('✅ Готово', `done_${o.id}`)]
@@ -168,34 +145,22 @@ bot.action(/done_(\d+)/, async (ctx) => {
     ctx.deleteMessage();
 });
 
-// --- ГЛОБАЛЬНИЙ ОБРОБНИК СТАНІВ ---
+// --- СТАНИ ---
 bot.on('text', async (ctx, next) => {
     if (ctx.session.state === 'PROMO') {
-        const promos = JSON.parse(fs.readFileSync(PROMOS_PATH, 'utf-8') || '{}');
-        const prize = promos[ctx.message.text.toUpperCase()];
-        if (prize) {
-            await db.run('UPDATE users SET balance = balance + ? WHERE user_id = ?', [prize, ctx.from.id]);
-            ctx.reply(`✅ Нараховано ${prize}₴`);
-        } else {
-            ctx.reply("❌ Невірний код");
-        }
+        const promos = fs.existsSync(PROMOS_PATH) ? JSON.parse(fs.readFileSync(PROMOS_PATH, 'utf-8')) : {};
+        const bonus = promos[ctx.message.text.toUpperCase()];
+        if (bonus) {
+            await db.run('UPDATE users SET balance = balance + ? WHERE user_id = ?', [bonus, ctx.from.id]);
+            ctx.reply(`✅ +${bonus}₴ нараховано!`);
+        } else ctx.reply("❌ Невірний код.");
         ctx.session.state = null;
         return;
     }
     return next();
 });
 
-// --- ЗАХИСТ ВІД ВИЛЕТІВ (Critical Stability) ---
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('⚠️ Unhandled Rejection:', reason);
-});
+// --- СТАБІЛЬНІСТЬ ---
+process.on('unhandledRejection', (e) => console.error('Error:', e));
 
-process.on('uncaughtException', (err) => {
-    console.error('🚫 Uncaught Exception:', err);
-});
-
-// --- ЗАПУСК ---
-bootstrap().then(() => {
-    bot.launch({ dropPendingUpdates: true });
-    console.log('💎 Void Engine 1.0 Online');
-});
+bootstrap().then(() => bot.launch({ dropPendingUpdates: true }));
