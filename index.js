@@ -3,126 +3,168 @@ const { Telegraf, Markup, session } = require('telegraf');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 
+// Конфігурація з .env
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 
 let db;
 
+// 1. Ініціалізація бази даних
 async function initDB() {
     db = await open({ filename: 'void_nexus.db', driver: sqlite3.Database });
     await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0, xp INTEGER DEFAULT 0, role TEXT DEFAULT 'USER');
-        CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, item TEXT, status TEXT DEFAULT 'WAITING', progress INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY, 
+            username TEXT, 
+            balance INTEGER DEFAULT 0, 
+            xp INTEGER DEFAULT 0, 
+            role TEXT DEFAULT 'USER'
+        );
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            uid INTEGER, 
+            item TEXT, 
+            status TEXT DEFAULT 'WAITING', 
+            progress INTEGER DEFAULT 0
+        );
     `);
+    console.log('🌑 Void Database Connected');
 }
 
 bot.use(session());
 
-// --- UI COMPONENTS ---
+// --- UI CONFIG ---
 const UI = {
-    userMenu: () => Markup.keyboard([
+    userKb: () => Markup.keyboard([
         ['📂 Catalog', '👤 Terminal'],
-        ['🛰 My Projects', '🎁 Sync Bonus']
+        ['🛰 My Projects', '🎁 Bonus']
     ]).resize(),
     
-    adminMenu: () => Markup.keyboard([
+    adminKb: () => Markup.keyboard([
         ['📡 System Stats', '🛠 Order Control'],
-        ['💳 Billing', '🌐 Global Alert'],
-        ['🔙 User Mode']
+        ['📢 Broadcast', '🔙 User Mode']
     ]).resize(),
 
-    statusConfig: {
+    statusMap: {
         WAITING: "⬜ Очікування",
         PROCESSING: "🟦 В роботі",
-        TESTING: "🟨 Тестування",
-        READY: "🟩 Готово"
+        READY: "🟩 Виконано"
     }
 };
 
-// --- CORE MIDDLEWARE ---
+// --- MIDDLEWARE (Розподіл ролей) ---
 bot.use(async (ctx, next) => {
     if (!ctx.from) return;
-    const user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
+    
+    let user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
     
     if (!user) {
-        const role = ctx.from.id === ADMIN_ID ? 'ADMIN' : 'USER';
-        await db.run('INSERT INTO users (id, username, role) VALUES (?, ?, ?)', [ctx.from.id, ctx.from.username, role]);
+        const role = (ctx.from.id === ADMIN_ID) ? 'ADMIN' : 'USER';
+        await db.run('INSERT INTO users (id, username, role) VALUES (?, ?, ?)', 
+            [ctx.from.id, ctx.from.username, role]);
+        user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
     }
     
-    ctx.state.user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
+    ctx.state.user = user;
+    ctx.state.isAdmin = (user.role === 'ADMIN');
     return next();
 });
 
 // --- COMMANDS ---
 bot.start((ctx) => {
-    const isOwner = ctx.state.user.role === 'ADMIN';
-    ctx.replyWithMarkdownV2(
-        `🌑 *VOID GENESIS v2\.0 active*\n\`System status: ONLINE\`\n\`Access level: ${ctx.state.user.role}\``,
-        isOwner ? UI.adminMenu() : UI.userMenu()
-    );
+    const welcomeText = ctx.state.isAdmin 
+        ? `🌑 *VOID NEXUS: ADMIN ACCESS*\nСистема розгорнута. Очікую команд, Архітекторе.`
+        : `🌑 *VOID TEAM SYSTEM*\nВітаємо у терміналі. Оберіть категорію для розробки.`;
+    
+    ctx.replyWithMarkdown(welcomeText, ctx.state.isAdmin ? UI.adminKb() : UI.userKb());
 });
 
 // --- USER LOGIC ---
 bot.hears('📂 Catalog', (ctx) => {
-    ctx.reply("📁 Оберіть категорію розробки:", Markup.inlineKeyboard([
-        [Markup.button.callback('🧊 3D RENDER', 'buy_render')],
-        [Markup.button.callback('💻 JAVA PLUGIN', 'buy_plugin')],
-        [Markup.button.callback('🎬 VIDEO EDIT', 'buy_video')]
+    ctx.reply("📁 Оберіть напрямок розробки:", Markup.inlineKeyboard([
+        [Markup.button.callback('🧊 3D RENDER (550₴)', 'buy_RENDER')],
+        [Markup.button.callback('💻 JAVA PLUGIN (300₴)', 'buy_PLUGIN')],
+        [Markup.button.callback('🎬 VIDEO EDIT (400₴)', 'buy_VIDEO')]
     ]));
 });
 
 bot.hears('👤 Terminal', async (ctx) => {
     const u = ctx.state.user;
-    const progress = "█".repeat(Math.floor(u.xp/10) % 10) + "░".repeat(10 - (Math.floor(u.xp/10) % 10));
-    ctx.replyWithMarkdownV2(
-        `💻 *USER TERMINAL*\n\n` +
+    const lvl = Math.floor(u.xp / 100);
+    const progress = "█".repeat(Math.floor((u.xp % 100) / 10)) + "░".repeat(10 - Math.floor((u.xp % 100) / 10));
+    
+    ctx.replyWithMarkdown(
+        `💻 *USER TERMINAL v2.0*\n\n` +
         `👤 ID: \`${ctx.from.id}\`\n` +
-        `💰 BAL: \`${u.balance}₴\`\n` +
-        `📊 XP:  \`[${progress}]\``
+        `💰 Balance: \`${u.balance}₴\`\n` +
+        `📊 Level: \`${lvl}\` [${progress}]`
     );
 });
 
 bot.hears('🛰 My Projects', async (ctx) => {
-    const orders = await db.all('SELECT * FROM orders WHERE uid = ?', [ctx.from.id]);
-    if (!orders.length) return ctx.reply("🛰 Немає активних проектів.");
+    const orders = await db.all('SELECT * FROM orders WHERE uid = ? ORDER BY id DESC', [ctx.from.id]);
+    if (!orders.length) return ctx.reply("🛰 Активних процесів не виявлено.");
     
-    const list = orders.map(o => `🆔 \`#${o.id}\` | *${o.item}*\nSTATUS: \`${UI.statusConfig[o.status]}\` [${o.progress}%]`).join('\n\n');
-    ctx.replyWithMarkdownV2(`📡 *АКТИВНІ ПРОЦЕСИ:*\n\n${list}`);
+    const list = orders.map(o => 
+        `🆔 *Order #${o.id}* - ${o.item}\n` +
+        `Status: \`${UI.statusMap[o.status]}\` [${o.progress}%]\n` +
+        `--------------------`
+    ).join('\n');
+    
+    ctx.replyWithMarkdown(`🛰 *ВАШІ ПРОЕКТИ:*\n\n${list}`);
 });
 
 // --- ADMIN LOGIC ---
 bot.hears('📡 System Stats', async (ctx) => {
-    if (ctx.state.user.role !== 'ADMIN') return;
+    if (!ctx.state.isAdmin) return;
     const stats = await db.get('SELECT COUNT(*) as u, (SELECT COUNT(*) FROM orders) as o FROM users');
-    ctx.replyWithMarkdownV2(`📊 *SYSTEM REPORT*\n\nUsers: \`${stats.u}\`\nOrders: \`${stats.o}\``);
+    ctx.replyWithMarkdown(`📊 *SYSTEM REPORT*\n\nКористувачів: \`${stats.u}\`\nЗамовлень: \`${stats.o}\``);
 });
 
 bot.hears('🛠 Order Control', async (ctx) => {
-    if (ctx.state.user.role !== 'ADMIN') return;
+    if (!ctx.state.isAdmin) return;
     const orders = await db.all('SELECT * FROM orders WHERE status != "READY" LIMIT 5');
-    if (!orders.length) return ctx.reply("Всі проекти завершені.");
+    
+    if (!orders.length) return ctx.reply("⚡ Всі проекти завершені або черга порожня.");
 
     for (const o of orders) {
-        ctx.reply(`📦 Замовлення #${o.id} від @${o.uid}`, Markup.inlineKeyboard([
+        ctx.reply(`📦 Замовлення #${o.id} (${o.item}) від @${o.uid}`, Markup.inlineKeyboard([
             [Markup.button.callback('🟦 В роботу', `set_PROCESSING_${o.id}`)],
-            [Markup.button.callback('🟩 Завершити', `set_READY_${o.id}`)]
+            [Markup.button.callback('🟩 Готово', `set_READY_${o.id}`)]
         ]));
     }
 });
 
-// --- ACTIONS ---
+bot.hears('🔙 User Mode', (ctx) => {
+    if (!ctx.state.isAdmin) return;
+    ctx.reply('Вхід у режим інтерфейсу клієнта...', UI.userKb());
+});
+
+// --- ACTIONS (Кнопки) ---
 bot.action(/buy_(.+)/, async (ctx) => {
-    const item = ctx.match[1].toUpperCase();
+    const item = ctx.match[1];
     await db.run('INSERT INTO orders (uid, item) VALUES (?, ?)', [ctx.from.id, item]);
-    ctx.answerCbQuery("INITIALIZED");
-    ctx.replyWithMarkdownV2(`✅ *ПРОЕКТ ${item} ІНІЦІЙОВАНО*\nСтатус можна відстежити в терміналі\.`);
+    await ctx.answerCbQuery("INITIALIZED");
+    ctx.replyWithMarkdown(`✅ *ПРОЕКТ ${item} ІНІЦІЙОВАНО*\nСтатус доступний у розділі "🛰 My Projects".`);
 });
 
 bot.action(/set_(.+)_(.+)/, async (ctx) => {
     const [_, status, id] = ctx.match;
-    await db.run('UPDATE orders SET status = ? WHERE id = ?', [status, id]);
-    ctx.answerCbQuery(`Status: ${status}`);
-    ctx.editMessageText(`✅ Статус проекту #${id} змінено на ${status}`);
+    const prog = status === 'READY' ? 100 : (status === 'PROCESSING' ? 45 : 0);
+    
+    await db.run('UPDATE orders SET status = ?, progress = ? WHERE id = ?', [status, prog, id]);
+    ctx.answerCbQuery(`Updated to ${status}`);
+    ctx.editMessageText(`✅ Статус проекту #${id} змінено на: ${UI.statusMap[status]}`);
+    
+    // Сповіщення юзера
+    const order = await db.get('SELECT uid FROM orders WHERE id = ?', [id]);
+    if (order) {
+        bot.telegram.sendMessage(order.uid, `🔔 *Оновлення проекту #${id}*\nСтатус: ${UI.statusMap[status]} [${prog}%]`, { parse_mode: 'Markdown' });
+    }
 });
 
-initDB().then(() => bot.launch());
+// --- ЗАПУСК ---
+initDB().then(() => {
+    console.log('🌑 Void Genesis v2.0 Started Successfully');
+    bot.launch();
+});
