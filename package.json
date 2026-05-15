@@ -13,6 +13,7 @@
   "dependencies": {
     "chartjs-node-canvas": "^5.0.0",
     "dotenv": "^17.4.2",
+    "grammy": "^1.42.0",
     "pm2": "^7.0.1",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",

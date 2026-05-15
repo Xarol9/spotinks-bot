@@ -1,170 +1,248 @@
+/**
+ * ==============================================================================
+ * VOID_OS THE MONOLITH PROTOCOL v8.0.0 "LORE-INTEGRATED"
+ * ==============================================================================
+ * Target Environment: Node.js v26.1.0+ | Arch Linux (Zen Kernel)
+ * Core Framework: grammY
+ * Developer: Morivis // Void Team
+ * Description: Ultimate OS with Dynamic JSON Lore, RPG V2, and VFS.
+ * ==============================================================================
+ */
+
 require('dotenv').config();
-const { Telegraf, Markup, session } = require('telegraf');
-const sqlite3 = require('sqlite3');
-const { open } = require('sqlite');
+const { Bot, InlineKeyboard, Keyboard } = require("grammy");
+const os = require('os');
+const crypto = require('crypto');
+const fs = require('fs');
 
-// Конфігурація з .env
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const ADMIN_ID = parseInt(process.env.ADMIN_ID);
+// ==============================================================================
+// [ 1. CORE SYSTEM & DATA LOADER ]
+// ==============================================================================
+const TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
 
-let db;
-
-// 1. Ініціалізація бази даних
-async function initDB() {
-    db = await open({ filename: 'void_nexus.db', driver: sqlite3.Database });
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY, 
-            username TEXT, 
-            balance INTEGER DEFAULT 0, 
-            xp INTEGER DEFAULT 0, 
-            role TEXT DEFAULT 'USER'
-        );
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            uid INTEGER, 
-            item TEXT, 
-            status TEXT DEFAULT 'WAITING', 
-            progress INTEGER DEFAULT 0
-        );
-    `);
-    console.log('🌑 Void Database Connected');
+if (!TOKEN) {
+    console.error("\x1b[31m%s\x1b[0m", "[ CRITICAL_FAILURE ]: BOT_TOKEN is missing. Halt.");
+    process.exit(1);
 }
 
-bot.use(session());
-
-// --- UI CONFIG ---
-const UI = {
-    userKb: () => Markup.keyboard([
-        ['📂 Catalog', '👤 Terminal'],
-        ['🛰 My Projects', '🎁 Bonus']
-    ]).resize(),
-    
-    adminKb: () => Markup.keyboard([
-        ['📡 System Stats', '🛠 Order Control'],
-        ['📢 Broadcast', '🔙 User Mode']
-    ]).resize(),
-
-    statusMap: {
-        WAITING: "⬜ Очікування",
-        PROCESSING: "🟦 В роботі",
-        READY: "🟩 Виконано"
+// Функція для отримання свіжих даних з JSON
+const getLore = () => {
+    try {
+        const raw = fs.readFileSync('./database.json', 'utf8');
+        return JSON.parse(raw);
+    } catch (e) {
+        console.error("Failed to load database.json. Check syntax!");
+        return null;
     }
 };
 
-// --- MIDDLEWARE (Розподіл ролей) ---
-bot.use(async (ctx, next) => {
-    if (!ctx.from) return;
-    
-    let user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
-    
-    if (!user) {
-        const role = (ctx.from.id === ADMIN_ID) ? 'ADMIN' : 'USER';
-        await db.run('INSERT INTO users (id, username, role) VALUES (?, ?, ?)', 
-            [ctx.from.id, ctx.from.username, role]);
-        user = await db.get('SELECT * FROM users WHERE id = ?', [ctx.from.id]);
+const bot = new Bot(TOKEN);
+
+const URLS = {
+    web_app: "https://xarol9.github.io/spotinks-web/index.html",
+    github: "https://github.com/Morivis",
+    tiktok: "https://www.tiktok.com/@.morivis.hub",
+    youtube: "https://youtube.com/@morivis1"
+};
+
+// ==============================================================================
+// [ 2. ASCII ART & UI ASSETS ]
+// ==============================================================================
+const ASCII = {
+    logo: `
+      __      __   _     _    ____   _____ 
+      \\ \\    / /  (_)   | |  / __ \\ / ____|
+       \\ \\  / /___ _  __| | | |  | | (___  
+        \\ \\/ / _ \\ |/ _\` | | |  | |\\___ \\ 
+         \\  /  __/ | (_| | | |__| |____) |
+          \\/ \\___|_|\\__,_|  \\____/|_____/ 
+    `,
+    bunker: "<code>[ BUNKER_OS_VISUAL ]</code>",
+    server: "[==========]\n[  VOID_OS ]\n[==========]"
+};
+
+// ==============================================================================
+// [ 3. STATE & METRICS ]
+// ==============================================================================
+const STATE = {
+    users: new Map(),
+    terminalSessions: new Map(),
+    bunkerGames: new Map(),
+    metrics: {
+        bootTime: Date.now(),
+        messagesHandled: 0,
+        commandsExecuted: 0
     }
-    
-    ctx.state.user = user;
-    ctx.state.isAdmin = (user.role === 'ADMIN');
-    return next();
+};
+
+// ==============================================================================
+// [ 4. MIDDLEWARE & RBAC ]
+// ==============================================================================
+bot.use(async (ctx, next) => {
+    STATE.metrics.messagesHandled++;
+    if (ctx.from) {
+        const isRoot = String(ctx.from.id) === String(ADMIN_ID);
+        if (!STATE.users.has(ctx.from.id)) {
+            STATE.users.set(ctx.from.id, {
+                id: ctx.from.id,
+                name: ctx.from.first_name,
+                role: isRoot ? "ROOT_ADMIN" : "GUEST"
+            });
+        }
+    }
+    await next();
 });
 
-// --- COMMANDS ---
-bot.start((ctx) => {
-    const welcomeText = ctx.state.isAdmin 
-        ? `🌑 *VOID NEXUS: ADMIN ACCESS*\nСистема розгорнута. Очікую команд, Архітекторе.`
-        : `🌑 *VOID TEAM SYSTEM*\nВітаємо у терміналі. Оберіть категорію для розробки.`;
+const getMainMenu = (isRoot) => {
+    const kb = new Keyboard();
+    if (isRoot) {
+        kb.webApp("⚡ SPOTINKS HUB", URLS.web_app).row()
+          .text("💻 TERMINAL").text("📊 METRICS").row()
+          .text("📂 LORE DB").text("🎮 BUNKER V2").row()
+          .text("⚙️ SYS ADMIN");
+    } else {
+        kb.webApp("🌐 ВІДКРИТИ SPOTINKS", URLS.web_app).row()
+          .text("📂 ПРОЕКТИ").text("📡 МЕРЕЖА").row()
+          .text("🎮 BUNKER LIFE");
+    }
+    return kb.resized();
+};
+
+// ==============================================================================
+// [ 5. COMMANDS & ROUTING ]
+// ==============================================================================
+bot.command("start", async (ctx) => {
+    const isRoot = String(ctx.from.id) === String(ADMIN_ID);
+    const lore = getLore();
     
-    ctx.replyWithMarkdown(welcomeText, ctx.state.isAdmin ? UI.adminKb() : UI.userKb());
+    await ctx.reply(`<code>[ BOOTING ${lore.system_info.os_core} ]...</code>`, { parse_mode: "HTML" });
+    await new Promise(r => setTimeout(r, 500));
+    
+    const welcomeText = isRoot 
+        ? `<b>[ ROOT SESSION ]</b>\nWelcome, Morivis.\nKernel: <code>${lore.system_info.kernel}</code>`
+        : `<b>[ VOID_OS INTERFACE ]</b>\nПривіт, ${ctx.from.first_name}.\nМи — Void Team. До канікул залишилося зовсім трохи.`;
+
+    await ctx.reply(welcomeText, { 
+        parse_mode: "HTML", 
+        reply_markup: getMainMenu(isRoot) 
+    });
 });
 
-// --- USER LOGIC ---
-bot.hears('📂 Catalog', (ctx) => {
-    ctx.reply("📁 Оберіть напрямок розробки:", Markup.inlineKeyboard([
-        [Markup.button.callback('🧊 3D RENDER (550₴)', 'buy_RENDER')],
-        [Markup.button.callback('💻 JAVA PLUGIN (300₴)', 'buy_PLUGIN')],
-        [Markup.button.callback('🎬 VIDEO EDIT (400₴)', 'buy_VIDEO')]
-    ]));
+// --- ГІСТЬ: ПРОЕКТИ З БАЗИ ---
+bot.hears("📂 ПРОЕКТИ", async (ctx) => {
+    const lore = getLore();
+    const projects = lore.projects_archive;
+    
+    let text = `<b>[ АРХІВ ПРОЕКТІВ ]</b>\n\n`;
+    text += `📦 <b>SoulKeep:</b> ${projects.soulkeep.summary}\n`;
+    text += `🌐 <b>Spotinks:</b> ${projects.spotinks_web.summary}\n`;
+    text += `💀 <b>Bunker:</b> ${projects.bunker_life.summary}`;
+
+    await ctx.reply(text, { 
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().url("GitHub", URLS.github)
+    });
 });
 
-bot.hears('👤 Terminal', async (ctx) => {
-    const u = ctx.state.user;
-    const lvl = Math.floor(u.xp / 100);
-    const progress = "█".repeat(Math.floor((u.xp % 100) / 10)) + "░".repeat(10 - Math.floor((u.xp % 100) / 10));
+// --- АДМІН: ПЕРЕГЛЯД ЛОРУ ТА ЛОГІВ ---
+bot.hears("📂 LORE DB", async (ctx) => {
+    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
+    const lore = getLore();
     
-    ctx.replyWithMarkdown(
-        `💻 *USER TERMINAL v2.0*\n\n` +
-        `👤 ID: \`${ctx.from.id}\`\n` +
-        `💰 Balance: \`${u.balance}₴\`\n` +
-        `📊 Level: \`${lvl}\` [${progress}]`
+    let logText = `<b>[ SYSTEM DEEP LOGS ]</b>\n\n`;
+    lore.bunker_life_ultra.deep_lore_logs.forEach(log => {
+        logText += `🕒 <code>${log.timestamp.split('T')[1]}</code>\n[${log.source}]: ${log.message}\n\n`;
+    });
+
+    await ctx.reply(logText, { parse_mode: "HTML" });
+});
+
+bot.hears("📊 METRICS", async (ctx) => {
+    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
+    const lore = getLore();
+    await ctx.reply(
+        `<b>[ STATION: ${lore.system_info.node_id} ]</b>\n` +
+        `CPU: <code>${os.cpus()[0].model}</code>\n` +
+        `RAM: <code>${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB</code>\n` +
+        `Security: <code>${lore.system_info.security_level}</code>`,
+        { parse_mode: "HTML" }
     );
 });
 
-bot.hears('🛰 My Projects', async (ctx) => {
-    const orders = await db.all('SELECT * FROM orders WHERE uid = ? ORDER BY id DESC', [ctx.from.id]);
-    if (!orders.length) return ctx.reply("🛰 Активних процесів не виявлено.");
+// ==============================================================================
+// [ 6. BUNKER ENGINE V2 (DYNAMO) ]
+// ==============================================================================
+bot.hears(/🎮 BUNKER/, async (ctx) => {
+    const lore = getLore();
+    STATE.bunkerGames.set(ctx.from.id, { loc: "entrance", inv: [] });
     
-    const list = orders.map(o => 
-        `🆔 *Order #${o.id}* - ${o.item}\n` +
-        `Status: \`${UI.statusMap[o.status]}\` [${o.progress}%]\n` +
-        `--------------------`
-    ).join('\n');
-    
-    ctx.replyWithMarkdown(`🛰 *ВАШІ ПРОЕКТИ:*\n\n${list}`);
+    const locData = lore.bunker_lore.locations.entrance;
+    await ctx.reply(
+        `<b>${locData.name}</b>\n\n${locData.description}\n\n<i>${locData.details}</i>`,
+        { 
+            parse_mode: "HTML", 
+            reply_markup: new InlineKeyboard()
+                .text("Оглянути артефакти", "bk_artifacts")
+                .row()
+                .text("❌ Вихід", "bk_exit")
+        }
+    );
 });
 
-// --- ADMIN LOGIC ---
-bot.hears('📡 System Stats', async (ctx) => {
-    if (!ctx.state.isAdmin) return;
-    const stats = await db.get('SELECT COUNT(*) as u, (SELECT COUNT(*) FROM orders) as o FROM users');
-    ctx.replyWithMarkdown(`📊 *SYSTEM REPORT*\n\nКористувачів: \`${stats.u}\`\nЗамовлень: \`${stats.o}\``);
+bot.on("callback_query:data", async (ctx) => {
+    const lore = getLore();
+    const data = ctx.callbackQuery.data;
+
+    if (data === "bk_artifacts") {
+        let artText = `<b>[ ЗНАЙДЕНІ АРТЕФАКТИ ]</b>\n\n`;
+        lore.bunker_lore.artifacts.forEach(a => {
+            artText += `🔹 <b>${a.name}</b>: ${a.lore}\n\n`;
+        });
+        await ctx.editMessageText(artText, { 
+            parse_mode: "HTML", 
+            reply_markup: new InlineKeyboard().text("⬅️ Назад", "bk_back") 
+        });
+    }
+
+    if (data === "bk_back") {
+        const locData = lore.bunker_lore.locations.entrance;
+        await ctx.editMessageText(
+            `<b>${locData.name}</b>\n\n${locData.description}\n\n<i>${locData.details}</i>`,
+            { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Оглянути артефакти", "bk_artifacts").row().text("❌ Вихід", "bk_exit") }
+        );
+    }
+
+    if (data === "bk_exit") {
+        await ctx.deleteMessage();
+        await ctx.answerCallbackQuery({ text: "Симуляцію завершено." });
+    }
+    
+    await ctx.answerCallbackQuery();
 });
 
-bot.hears('🛠 Order Control', async (ctx) => {
-    if (!ctx.state.isAdmin) return;
-    const orders = await db.all('SELECT * FROM orders WHERE status != "READY" LIMIT 5');
-    
-    if (!orders.length) return ctx.reply("⚡ Всі проекти завершені або черга порожня.");
+// ==============================================================================
+// [ 7. TERMINAL & SYSTEM BOOT ]
+// ==============================================================================
+bot.hears("💻 TERMINAL", async (ctx) => {
+    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
+    STATE.terminalSessions.set(ctx.from.id, { active: true });
+    await ctx.reply("<code>[ TERMINAL_READY ]: root@void_os:~#</code>", { parse_mode: "HTML" });
+});
 
-    for (const o of orders) {
-        ctx.reply(`📦 Замовлення #${o.id} (${o.item}) від @${o.uid}`, Markup.inlineKeyboard([
-            [Markup.button.callback('🟦 В роботу', `set_PROCESSING_${o.id}`)],
-            [Markup.button.callback('🟩 Готово', `set_READY_${o.id}`)]
-        ]));
+bot.on("message:text", async (ctx) => {
+    if (STATE.terminalSessions.has(ctx.from.id)) {
+        if (ctx.message.text.toLowerCase() === "exit") {
+            STATE.terminalSessions.delete(ctx.from.id);
+            await ctx.reply("Logout.", { reply_markup: getMainMenu(true) });
+            return;
+        }
+        await ctx.reply(`<code>bash: ${ctx.message.text}: command not found in this sector.</code>`, { parse_mode: "HTML" });
     }
 });
 
-bot.hears('🔙 User Mode', (ctx) => {
-    if (!ctx.state.isAdmin) return;
-    ctx.reply('Вхід у режим інтерфейсу клієнта...', UI.userKb());
-});
+console.clear();
+console.log("\x1b[36m%s\x1b[0m", ASCII.logo);
+console.log(`[ VOID_OS ]: BOOTING SUCCESSFUL. VERSION: ${getLore().system_info.os_core}`);
 
-// --- ACTIONS (Кнопки) ---
-bot.action(/buy_(.+)/, async (ctx) => {
-    const item = ctx.match[1];
-    await db.run('INSERT INTO orders (uid, item) VALUES (?, ?)', [ctx.from.id, item]);
-    await ctx.answerCbQuery("INITIALIZED");
-    ctx.replyWithMarkdown(`✅ *ПРОЕКТ ${item} ІНІЦІЙОВАНО*\nСтатус доступний у розділі "🛰 My Projects".`);
-});
-
-bot.action(/set_(.+)_(.+)/, async (ctx) => {
-    const [_, status, id] = ctx.match;
-    const prog = status === 'READY' ? 100 : (status === 'PROCESSING' ? 45 : 0);
-    
-    await db.run('UPDATE orders SET status = ?, progress = ? WHERE id = ?', [status, prog, id]);
-    ctx.answerCbQuery(`Updated to ${status}`);
-    ctx.editMessageText(`✅ Статус проекту #${id} змінено на: ${UI.statusMap[status]}`);
-    
-    // Сповіщення юзера
-    const order = await db.get('SELECT uid FROM orders WHERE id = ?', [id]);
-    if (order) {
-        bot.telegram.sendMessage(order.uid, `🔔 *Оновлення проекту #${id}*\nСтатус: ${UI.statusMap[status]} [${prog}%]`, { parse_mode: 'Markdown' });
-    }
-});
-
-// --- ЗАПУСК ---
-initDB().then(() => {
-    console.log('🌑 Void Genesis v2.0 Started Successfully');
-    bot.launch();
-});
+bot.start();
