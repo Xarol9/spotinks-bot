@@ -1,18 +1,16 @@
 /**
  * ==============================================================================
- * VOID_OS THE MONOLITH PROTOCOL v8.1.0 "PROXIMA"
+ * VOID_OS THE MONOLITH PROTOCOL v8.2.0 "STABLE CORE"
  * ==============================================================================
  * Target Environment: Node.js v26.1.0+ | Arch Linux (Zen Kernel)
  * Developer: Morivis // Void Team
- * Description: Ultimate OS with Dynamic JSON Lore, VFS, and RPG Engine.
+ * Status: AUTONOMOUS (Internal Lore)
  * ==============================================================================
  */
 
 require('dotenv').config();
 const { Bot, InlineKeyboard, Keyboard } = require("grammy");
 const os = require('os');
-const fs = require('fs');
-const crypto = require('crypto');
 
 // --- [ 1. CORE CONFIGURATION ] ---
 const TOKEN = process.env.BOT_TOKEN;
@@ -32,25 +30,49 @@ const URLS = {
     youtube: "https://youtube.com/@morivis1"
 };
 
-// --- [ 2. DATA LOADER ] ---
-const getLore = () => {
-    try {
-        const raw = fs.readFileSync('./database.json', 'utf8');
-        return JSON.parse(raw);
-    } catch (e) {
-        return { system_info: { os_core: "FAILED", kernel: "ERROR" }, bunker_lore: { locations: { entrance: { name: "Error", description: "Database not found." } } } };
+// --- [ 2. INTERNAL DATA (LORE) ] ---
+const LORE = {
+    system_info: {
+        os_core: "VOID_OS v8.2.0",
+        kernel: "linux-zen-proxima",
+        node_id: "DESNA_STATION_01",
+        security_level: "MAXIMUM"
+    },
+    projects_archive: {
+        soulkeep: { summary: "Java-плагін для MC 1.21.11. Inventory retention & soul logic." },
+        spotinks_web: { summary: "Bento Grid UI станція. Singularity design system." },
+        bunker_life: { summary: "Survival-horror екосистема Сектора 4." }
+    },
+    bunker_lore: {
+        locations: {
+            entrance: { 
+                name: "Вхід до Бункера", 
+                description: "Масивні гермодвері Сектора 4. Повітря важке, пахне озоном.", 
+                details: "Зчитувач карток очікує ініціалізації." 
+            }
+        },
+        artifacts: [
+            { name: "Broken Data-Chip", lore: "Логи першої ініціалізації ядра VOID_OS." },
+            { name: "Zen-Core Cell", lore: "Енергоелемент, що живить термінали станції." }
+        ]
+    },
+    bunker_life_ultra: {
+        deep_lore_logs: [
+            { source: "SYS", message: "Kernel established. Desna sector connected." },
+            { source: "LOG", message: "Proxima protocol synchronized. Database integrated." }
+        ]
     }
 };
+
+const getLore = () => LORE;
 
 // --- [ 3. STATE & METRICS ] ---
 const STATE = {
     users: new Map(),
     terminalSessions: new Map(),
-    bunkerGames: new Map(),
     metrics: {
         bootTime: Date.now(),
-        messagesHandled: 0,
-        errorsCaught: 0
+        messagesHandled: 0
     }
 };
 
@@ -99,13 +121,13 @@ bot.command("start", async (ctx) => {
     const lore = getLore();
     
     const boot = await ctx.reply(`<code>[ BOOTING ${lore.system_info.os_core} ]...</code>`, { parse_mode: "HTML" });
-    await sleep(600);
-    await ctx.api.editMessageText(ctx.chat.id, boot.message_id, "<code>[ KERNEL ]: Loading Zen-Kernel modules...</code>", { parse_mode: "HTML" });
     await sleep(400);
+    await ctx.api.editMessageText(ctx.chat.id, boot.message_id, "<code>[ KERNEL ]: Loading Zen-Kernel modules...</code>", { parse_mode: "HTML" });
+    await sleep(300);
     await ctx.api.deleteMessage(ctx.chat.id, boot.message_id);
 
     const welcome = isRoot 
-        ? `<b>[ VOID_OS ROOT ]</b>\nСистема готова до роботи, Morivis.\nВузол: <code>${lore.system_info.node_id}</code>`
+        ? `<b>[ VOID_OS ROOT ]</b>\nСистема готова, Morivis.\nВузол: <code>${lore.system_info.node_id}</code>`
         : `<b>[ SPOTINKS ]</b>\nВітаю у мережі Void Team.\nДоступ дозволено. Оберіть модуль.`;
 
     await ctx.reply(welcome, { parse_mode: "HTML", reply_markup: getMainMenu(isRoot) });
@@ -148,8 +170,8 @@ bot.hears("📊 METRICS", async (ctx) => {
 bot.hears("📂 LORE DB", async (ctx) => {
     if (String(ctx.from.id) !== String(ADMIN_ID)) return;
     const lore = getLore();
-    let logs = lore.bunker_life_ultra.deep_lore_logs.slice(-3).map(l => `[${l.source}]: ${l.message}`).join("\n\n");
-    await ctx.reply(`<b>[ LATEST LOGS ]</b>\n\n${logs}`, { parse_mode: "HTML" });
+    let logs = lore.bunker_life_ultra.deep_lore_logs.map(l => `[${l.source}]: ${l.message}`).join("\n\n");
+    await ctx.reply(`<b>[ DATABASE LOGS ]</b>\n\n${logs}`, { parse_mode: "HTML" });
 });
 
 // --- [ 10. BUNKER ENGINE ] ---
@@ -162,11 +184,11 @@ bot.hears(/🎮 BUNKER/, async (ctx) => {
     );
 });
 
-// --- [ 11. TERMINAL EMULATOR (THE CORE) ] ---
+// --- [ 11. TERMINAL EMULATOR ] ---
 bot.hears("💻 TERMINAL", async (ctx) => {
     if (String(ctx.from.id) !== String(ADMIN_ID)) return;
     STATE.terminalSessions.set(ctx.from.id, true);
-    await ctx.reply("<code>[ TERMINAL ACTIVE ]: type 'exit' to close.</code>", { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+    await ctx.reply("<code>[ VOID_BASH ACTIVE ]: type 'exit' to close.</code>", { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
 });
 
 bot.on("message:text", async (ctx) => {
@@ -179,7 +201,9 @@ bot.on("message:text", async (ctx) => {
     if (input === "neofetch") {
         res = `<b>${ctx.from.username}@void-os</b>\n----------\n<b>OS:</b> ${lore.system_info.os_core}\n<b>Kernel:</b> ${lore.system_info.kernel}\n<b>Memory:</b> ${getMemoryUsage()}MB\n<b>Shell:</b> VoidBash`;
     } else if (input === "ls") {
-        res = "📄 database.json\n📄 index.js\n📁 node_modules/\n📄 package.json";
+        res = "📄 index.js\n📁 node_modules/\n📄 package.json\n📄 .env";
+    } else if (input === "whoami") {
+        res = `USER: ${ctx.from.first_name}\nROLE: ROOT_ADMIN\nSTATION: ${lore.system_info.node_id}`;
     } else if (input === "exit") {
         STATE.terminalSessions.delete(ctx.from.id);
         await ctx.reply("Session closed.", { reply_markup: getMainMenu(true) });
