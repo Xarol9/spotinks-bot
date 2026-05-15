@@ -1,237 +1,156 @@
 /**
  * ==============================================================================
- * VOID_OS THE MONOLITH PROTOCOL v8.2.0 "STABLE CORE"
+ * VOID_CORE v9.1.0 "PROXIMA_RELOADED"
  * ==============================================================================
- * Target Environment: Node.js v26.1.0+ | Arch Linux (Zen Kernel)
  * Developer: Morivis // Void Team
- * Status: AUTONOMOUS (Internal Lore)
+ * Architecture: Event-Driven Terminal & Modular UI
  * ==============================================================================
  */
 
 require('dotenv').config();
-const { Bot, InlineKeyboard, Keyboard } = require("grammy");
+const { Bot, InlineKeyboard, Keyboard, session } = require("grammy");
 const os = require('os');
 
-// --- [ 1. CORE CONFIGURATION ] ---
-const TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID;
-
-if (!TOKEN) {
-    console.error("\x1b[31m%s\x1b[0m", "[ CRITICAL_FAILURE ]: BOT_TOKEN is missing.");
-    process.exit(1);
-}
-
-const bot = new Bot(TOKEN);
-
-const URLS = {
-    web_app: "https://xarol9.github.io/spotinks-web/index.html",
-    github: "https://github.com/Morivis",
-    tiktok: "https://www.tiktok.com/@.morivis.hub",
-    youtube: "https://youtube.com/@morivis1"
+// --- [ 1. CONFIG & DATA ] ---
+const config = {
+    token: process.env.BOT_TOKEN,
+    adminId: Number(process.env.ADMIN_ID),
+    urls: {
+        web: "https://xarol9.github.io/spotinks-web/index.html",
+        github: "https://github.com/Morivis",
+        tiktok: "https://www.tiktok.com/@.morivis.hub",
+        youtube: "https://youtube.com/@morivis1"
+    }
 };
 
-// --- [ 2. INTERNAL DATA (LORE) ] ---
 const LORE = {
-    system_info: {
-        os_core: "VOID_OS v8.2.0",
-        kernel: "linux-zen-proxima",
-        node_id: "DESNA_STATION_01",
-        security_level: "MAXIMUM"
-    },
-    projects_archive: {
-        soulkeep: { summary: "Java-плагін для MC 1.21.11. Inventory retention & soul logic." },
-        spotinks_web: { summary: "Bento Grid UI станція. Singularity design system." },
-        bunker_life: { summary: "Survival-horror екосистема Сектора 4." }
-    },
-    bunker_lore: {
-        locations: {
-            entrance: { 
-                name: "Вхід до Бункера", 
-                description: "Масивні гермодвері Сектора 4. Повітря важке, пахне озоном.", 
-                details: "Зчитувач карток очікує ініціалізації." 
-            }
-        },
-        artifacts: [
-            { name: "Broken Data-Chip", lore: "Логи першої ініціалізації ядра VOID_OS." },
-            { name: "Zen-Core Cell", lore: "Енергоелемент, що живить термінали станції." }
-        ]
-    },
-    bunker_life_ultra: {
-        deep_lore_logs: [
-            { source: "SYS", message: "Kernel established. Desna sector connected." },
-            { source: "LOG", message: "Proxima protocol synchronized. Database integrated." }
-        ]
+    os: "VOID_CORE v9.1.0",
+    node: "DESNA_STATION_01",
+    projects: [
+        { name: "SoulKeep", type: "Java/MC", desc: "Advanced inventory protocol for 1.21.11." },
+        { name: "Spotinks", type: "Web/UI", desc: "Singularity design hub & Bento Grid." },
+        { name: "Bunker Life", type: "RPG/Horror", desc: "Survival ecosystem in Sector 4." }
+    ],
+    bunker: {
+        entrance: "<b>Вхід до Бункера</b>\n\nМасивні гермодвері Сектора 4. Датчики фіксують активність ядра.",
+        artifacts: "🔹 <b>Data-Chip</b>: Логи ядра.\n🔹 <b>Zen-Cell</b>: Енергія станції."
     }
 };
 
-const getLore = () => LORE;
+if (!config.token) throw new Error("CRITICAL: BOT_TOKEN is missing!");
+const bot = new Bot(config.token);
 
-// --- [ 3. STATE & METRICS ] ---
-const STATE = {
-    users: new Map(),
-    terminalSessions: new Map(),
-    metrics: {
-        bootTime: Date.now(),
-        messagesHandled: 0
-    }
-};
+// Використовуємо сесії для відстеження станів (наприклад, чи в терміналі юзер)
+bot.use(session({ initial: () => ({ inTerminal: false }) }));
 
-// --- [ 4. UTILS ] ---
-const getMemoryUsage = () => (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-// --- [ 5. UI GENERATORS ] ---
-const getMainMenu = (isRoot) => {
-    const kb = new Keyboard();
-    if (isRoot) {
-        kb.webApp("⚡ SPOTINKS HUB", URLS.web_app).row()
-          .text("💻 TERMINAL").text("📊 METRICS").row()
-          .text("📂 LORE DB").text("🎮 BUNKER V2").row()
-          .text("⚙️ SYS ADMIN");
-    } else {
-        kb.webApp("🌐 ВІДКРИТИ SPOTINKS", URLS.web_app).row()
-          .text("📂 ПРОЕКТИ").text("📡 МЕРЕЖА").row()
-          .text("🎮 BUNKER LIFE");
-    }
-    return kb.resized();
-};
-
-const getBunkerMenu = () => {
-    return new InlineKeyboard()
-        .text("🔍 Оглянути артефакти", "bk_artifacts")
-        .row()
-        .text("❌ Вийти з системи", "bk_exit");
-};
-
-// --- [ 6. MIDDLEWARE ] ---
-bot.use(async (ctx, next) => {
-    STATE.metrics.messagesHandled++;
-    if (ctx.from) {
-        const isRoot = String(ctx.from.id) === String(ADMIN_ID);
-        if (!STATE.users.has(ctx.from.id)) {
-            STATE.users.set(ctx.from.id, { id: ctx.from.id, role: isRoot ? "ROOT_ADMIN" : "GUEST" });
+// --- [ 2. UI ENGINE ] ---
+const UI = {
+    main: (id) => {
+        const kb = new Keyboard().webApp("⚡ TERMINAL HUB", config.urls.web).row();
+        if (id === config.adminId) {
+            kb.text("📟 CONSOLE").text("📊 METRICS").row();
         }
-    }
-    await next();
+        kb.text("📂 PROJECTS").text("📡 NETWORK").row().text("🎮 BUNKER");
+        return kb.resized();
+    },
+    bunker: new InlineKeyboard()
+        .text("🔍 ARTIFACTS", "bk_arts")
+        .text("❌ EXIT", "bk_exit"),
+    back: new InlineKeyboard().text("⬅️ BACK_TO_MENU", "cmd_start")
+};
+
+// --- [ 3. CORE LOGIC ] ---
+
+const getMetrics = () => ({
+    uptime: `${Math.floor(process.uptime() / 60)}m ${Math.floor(process.uptime() % 60)}s`,
+    ram: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`,
+    load: `${os.loadavg()[0].toFixed(2)}%`
 });
 
-// --- [ 7. COMMANDS ] ---
+// Command: /start
 bot.command("start", async (ctx) => {
-    const isRoot = String(ctx.from.id) === String(ADMIN_ID);
-    const lore = getLore();
-    
-    const boot = await ctx.reply(`<code>[ BOOTING ${lore.system_info.os_core} ]...</code>`, { parse_mode: "HTML" });
-    await sleep(400);
-    await ctx.api.editMessageText(ctx.chat.id, boot.message_id, "<code>[ KERNEL ]: Loading Zen-Kernel modules...</code>", { parse_mode: "HTML" });
-    await sleep(300);
-    await ctx.api.deleteMessage(ctx.chat.id, boot.message_id);
-
-    const welcome = isRoot 
-        ? `<b>[ VOID_OS ROOT ]</b>\nСистема готова, Morivis.\nВузол: <code>${lore.system_info.node_id}</code>`
-        : `<b>[ SPOTINKS ]</b>\nВітаю у мережі Void Team.\nДоступ дозволено. Оберіть модуль.`;
-
-    await ctx.reply(welcome, { parse_mode: "HTML", reply_markup: getMainMenu(isRoot) });
-});
-
-// --- [ 8. GUEST MODULES ] ---
-bot.hears("📂 ПРОЕКТИ", async (ctx) => {
-    const lore = getLore();
-    const p = lore.projects_archive;
-    await ctx.reply(
-        `<b>[ PROJECT ARCHIVE ]</b>\n\n` +
-        `📦 <b>SoulKeep:</b> ${p.soulkeep.summary}\n` +
-        `🌐 <b>Spotinks:</b> ${p.spotinks_web.summary}\n` +
-        `💀 <b>Bunker Life:</b> ${p.bunker_life.summary}`,
-        { parse_mode: "HTML", reply_markup: new InlineKeyboard().url("GitHub Source", URLS.github) }
-    );
-});
-
-bot.hears("📡 МЕРЕЖА", async (ctx) => {
-    await ctx.reply("<b>[ VOID_NETWORK ]</b>\nНаші канали зв'язку:", {
+    ctx.session.inTerminal = false;
+    const isRoot = ctx.from.id === config.adminId;
+    await ctx.reply(isRoot ? `<b>[ VOID_ROOT ]</b>\nSystem online. Node: <code>${LORE.node}</code>` : `<b>[ VOID_GUEST ]</b>\nAccess granted.`, {
         parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().url("TikTok", URLS.tiktok).url("YouTube", URLS.youtube)
+        reply_markup: UI.main(ctx.from.id)
     });
 });
 
-// --- [ 9. ROOT MODULES ] ---
+// Module: Projects
+bot.hears("📂 PROJECTS", async (ctx) => {
+    const list = LORE.projects.map(p => `• <b>${p.name}</b>: ${p.desc}`).join("\n\n");
+    await ctx.reply(`<b>[ ARCHIVE ]</b>\n\n${list}`, { parse_mode: "HTML", reply_markup: UI.back });
+});
+
+// Module: Network
+bot.hears("📡 NETWORK", async (ctx) => {
+    const kb = new InlineKeyboard().url("TikTok", config.urls.tiktok).url("YouTube", config.urls.youtube);
+    await ctx.reply("<b>[ BROADCAST_NODES ]</b>", { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Module: Metrics (Root Only)
 bot.hears("📊 METRICS", async (ctx) => {
-    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
-    const lore = getLore();
-    await ctx.reply(
-        `<b>[ DIAGNOSTICS ]</b>\n\n` +
-        `🖥️ <b>CPU:</b> <code>${os.cpus()[0].model}</code>\n` +
-        `🧠 <b>RAM:</b> <code>${getMemoryUsage()} MB</code>\n` +
-        `⏱️ <b>Uptime:</b> <code>${Math.floor(os.uptime()/3600)}h</code>\n` +
-        `🛡️ <b>Security:</b> <code>${lore.system_info.security_level}</code>`,
-        { parse_mode: "HTML" }
-    );
+    if (ctx.from.id !== config.adminId) return;
+    const m = getMetrics();
+    await ctx.reply(`<b>[ DIAGNOSTICS ]</b>\n\nUptime: <code>${m.uptime}</code>\nRAM: <code>${m.ram}</code>\nLoad: <code>${m.load}</code>`, { parse_mode: "HTML" });
 });
 
-bot.hears("📂 LORE DB", async (ctx) => {
-    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
-    const lore = getLore();
-    let logs = lore.bunker_life_ultra.deep_lore_logs.map(l => `[${l.source}]: ${l.message}`).join("\n\n");
-    await ctx.reply(`<b>[ DATABASE LOGS ]</b>\n\n${logs}`, { parse_mode: "HTML" });
+// Module: Bunker
+bot.hears("🎮 BUNKER", async (ctx) => {
+    await ctx.reply(LORE.bunker.entrance, { parse_mode: "HTML", reply_markup: UI.bunker });
 });
 
-// --- [ 10. BUNKER ENGINE ] ---
-bot.hears(/🎮 BUNKER/, async (ctx) => {
-    const lore = getLore();
-    const loc = lore.bunker_lore.locations.entrance;
-    await ctx.reply(
-        `<b>${loc.name}</b>\n\n${loc.description}\n\n<i>${loc.details}</i>`,
-        { parse_mode: "HTML", reply_markup: getBunkerMenu() }
-    );
+// --- [ 4. TERMINAL EMULATOR (THE BASH) ---
+
+bot.hears("📟 CONSOLE", async (ctx) => {
+    if (ctx.from.id !== config.adminId) return;
+    ctx.session.inTerminal = true;
+    await ctx.reply("<code>[ VOID_BASH ACTIVE ]\nType 'exit' to return.</code>", { 
+        parse_mode: "HTML", 
+        reply_markup: { remove_keyboard: true } 
+    });
 });
 
-// --- [ 11. TERMINAL EMULATOR ] ---
-bot.hears("💻 TERMINAL", async (ctx) => {
-    if (String(ctx.from.id) !== String(ADMIN_ID)) return;
-    STATE.terminalSessions.set(ctx.from.id, true);
-    await ctx.reply("<code>[ VOID_BASH ACTIVE ]: type 'exit' to close.</code>", { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
-});
-
-bot.on("message:text", async (ctx) => {
-    if (!STATE.terminalSessions.has(ctx.from.id)) return;
+bot.on("message:text", async (ctx, next) => {
+    if (!ctx.session.inTerminal) return next();
     
-    const input = ctx.message.text.trim().toLowerCase();
-    const lore = getLore();
-    let res = "";
+    const cmd = ctx.message.text.toLowerCase().trim();
+    let response = "";
 
-    if (input === "neofetch") {
-        res = `<b>${ctx.from.username}@void-os</b>\n----------\n<b>OS:</b> ${lore.system_info.os_core}\n<b>Kernel:</b> ${lore.system_info.kernel}\n<b>Memory:</b> ${getMemoryUsage()}MB\n<b>Shell:</b> VoidBash`;
-    } else if (input === "ls") {
-        res = "📄 index.js\n📁 node_modules/\n📄 package.json\n📄 .env";
-    } else if (input === "whoami") {
-        res = `USER: ${ctx.from.first_name}\nROLE: ROOT_ADMIN\nSTATION: ${lore.system_info.node_id}`;
-    } else if (input === "exit") {
-        STATE.terminalSessions.delete(ctx.from.id);
-        await ctx.reply("Session closed.", { reply_markup: getMainMenu(true) });
-        return;
+    if (cmd === "exit") {
+        ctx.session.inTerminal = false;
+        return ctx.reply("Exiting terminal...", { reply_markup: UI.main(ctx.from.id) });
+    } else if (cmd === "ls") {
+        response = "📄 index.js\n📄 .env\n📁 node_modules";
+    } else if (cmd === "neofetch") {
+        const m = getMetrics();
+        response = `<b>morivis@void-os</b>\n---\nOS: ${LORE.os}\nRAM: ${m.ram}\nUP: ${m.uptime}`;
+    } else if (cmd === "whoami") {
+        response = `ROOT_USER: Morivis\nSTATION: ${LORE.node}`;
     } else {
-        res = `bash: ${input}: command not found`;
+        response = `bash: ${cmd}: command not found`;
     }
-    await ctx.reply(`<code>${res}</code>`, { parse_mode: "HTML" });
+
+    await ctx.reply(`<code>${response}</code>`, { parse_mode: "HTML" });
 });
 
-// --- [ 12. CALLBACKS ] ---
+// --- [ 5. CALLBACK HANDLING ] ---
 bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
-    const lore = getLore();
-
-    if (data === "bk_artifacts") {
-        const arts = lore.bunker_lore.artifacts.map(a => `🔹 <b>${a.name}</b>: ${a.lore}`).join("\n\n");
-        await ctx.editMessageText(`<b>[ ARTIFACTS ]</b>\n\n${arts}`, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("⬅️ Назад", "bk_back") });
-    } else if (data === "bk_back") {
-        const loc = lore.bunker_lore.locations.entrance;
-        await ctx.editMessageText(`<b>${loc.name}</b>\n\n${loc.description}`, { parse_mode: "HTML", reply_markup: getBunkerMenu() });
+    if (data === "bk_arts") {
+        await ctx.editMessageText(`<b>[ ARTIFACTS ]</b>\n\n${LORE.bunker.artifacts}`, { parse_mode: "HTML", reply_markup: UI.back });
     } else if (data === "bk_exit") {
         await ctx.deleteMessage();
+    } else if (data === "cmd_start") {
+        await ctx.reply("Main node active.", { reply_markup: UI.main(ctx.from.id) });
     }
     await ctx.answerCallbackQuery();
 });
 
-// --- [ 13. BOOT ] ---
+// --- [ 6. ERROR HANDLING & BOOT ] ---
+bot.catch((err) => console.error(`[SYSTEM_ERROR]: ${err.message}`));
+
 console.clear();
-console.log("\x1b[36m%s\x1b[0m", "[ VOID_OS ONLINE ]");
+console.log(`\x1b[36m[ ${LORE.os} ]\x1b[0m ONLINE // Node: ${LORE.node}`);
 bot.start();
